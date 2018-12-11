@@ -1,4 +1,5 @@
 #include "imgproc.h"
+#include <queue>
 
 namespace IPCVL {
 	namespace IMG_PROC {
@@ -45,7 +46,205 @@ namespace IPCVL {
 					int h = UTIL::quantize(mat_h.at<uchar>(y, x));
 					int s = UTIL::quantize(mat_s.at<uchar>(y, x));
 
-					outputProb.at<uchar>(y,x) = UTIL::h_r(model_hist, input_hist, h, s)*255;
+					outputProb.at<uchar>(y, x) = UTIL::h_r(model_hist, input_hist, h, s) * 255;
+				}
+			}
+		}
+
+		void thresh_binary(cv::InputArray src, cv::OutputArray dst, const int & threshold)
+		{
+			cv::Mat srcMat = src.getMat();
+			dst.create(srcMat.size(), CV_8UC1);
+			cv::Mat dstMat = dst.getMat();
+
+			for (int y = 0; y < src.rows(); y++) {
+				for (int x = 0; x < src.cols(); x++) {
+					if (srcMat.at<uchar>(y, x) >= threshold)
+						dstMat.at<uchar>(y, x) = 255;
+					else
+						dstMat.at<uchar>(y, x) = 0;
+				}
+			}
+		}
+
+		void thresh_otsu(cv::InputArray src, cv::OutputArray dst)
+		{
+			cv::Mat srcMat = src.getMat();
+			double hist[256] = { 0., };
+			double w[256] = { 0., };
+			double u0[256] = { 0., };
+			double u1[256] = { 0., };
+			double v[256] = { 0., };
+
+			double u = 0.;
+			int L = 256;
+			double max_v = 0.;
+			int T = 0;
+
+			//히스토그램 정규화
+			UTIL::calcNormedHist(srcMat, hist);
+
+			for (int i = 0; i < L; i++) {
+				u += i*hist[i];
+			}
+
+			w[0] = hist[0];
+
+			for (int t = 1; t < L; t++) {
+				w[t] = w[t - 1] + hist[t];
+				if (w[t] != 0.0) {
+					u0[t] = ((w[t - 1] * u0[t - 1]) + (t*hist[t])) / w[t];
+				}
+				if (1 - w[t] != 0) {
+					u1[t] = (u - (w[t] * u0[t])) / (1 - w[t]);
+				}
+				v[t] = w[t] * (1 - w[t])*((u0[t] - u1[t])*(u0[t] - u1[t]));
+			}
+			
+			for (int t = 0; t < L; t++) {
+				if (max_v < v[t]) {
+					max_v = v[t];
+					T = t;
+				}
+			}
+			dst.create(srcMat.size(), CV_8UC1);
+			cv::Mat dstMat = dst.getMat();
+
+			for (int y = 0; y < src.rows(); y++) {
+				for (int x = 0; x < src.cols(); x++) {
+					if (srcMat.at<uchar>(y, x) >= T)
+						dstMat.at<uchar>(y, x) = 255;
+					else
+						dstMat.at<uchar>(y, x) = 0;
+				}
+			}
+		}
+
+		void flood_fill4(cv::Mat & l, const int & j, const int & i, const int & label)
+		{
+			if (l.at<int>(j, i) == -1) {
+				l.at<int>(j, i) = label;
+
+				flood_fill4(l, j, i + 1, label);
+				flood_fill4(l, j - 1, i, label);
+				flood_fill4(l, j, i - 1, label);
+				flood_fill4(l, j + 1, i, label);
+			}
+		}
+
+		void flood_fill8(cv::Mat & l, const int & j, const int & i, const int & label)
+		{
+			if (l.at<int>(j, i) == -1) {
+				l.at<int>(j, i) = label;
+
+				flood_fill8(l, j + 1, i + 1, label);
+				flood_fill8(l, j - 1, i - 1, label);
+				flood_fill8(l, j - 1, i + 1, label);
+				flood_fill8(l, j + 1, i - 1, label);
+
+				flood_fill8(l, j, i + 1, label);
+				flood_fill8(l, j - 1, i, label);
+				flood_fill8(l, j, i - 1, label);
+				flood_fill8(l, j + 1, i, label);
+			}
+		}
+
+		void efficient_flood_fill4(cv::Mat & l, const int & j, const int & i, const int & label)
+		{
+			std::queue<cv::Point> q;
+			cv::Point p;
+			p.y = j;
+			p.x = i;
+
+			q.push(p);
+
+			while (!q.empty()){
+				cv::Point tmp = q.front();
+				q.pop();
+				if (l.at<int>(tmp.y, tmp.x) == -1) {
+					int left = tmp.x;
+					int right = tmp.x;
+
+					while (l.at<int>(tmp.y, left - 1) == -1) {
+						left--;
+					}
+					while (l.at<int>(tmp.y, right + 1) == -1) {
+						right++;
+					}
+
+					for (int c = left; c <= right; c++) {
+
+						l.at<int>(tmp.y, c) = label;
+						if (l.at<int>(tmp.y - 1, c) == -1 && (c == left || l.at<int>(tmp.y - 1, c - 1) != -1)) {
+							cv::Point p1;
+							p1.y = tmp.y - 1;
+							p1.x = c;
+							q.push(p1);
+						}
+
+						if (l.at<int>(tmp.y + 1, c) == -1 && (c == left || l.at<int>(tmp.y + 1, c - 1) != -1)) {
+							cv::Point p2;
+							p2.y = tmp.y + 1;
+							p2.x = c;
+							q.push(p2);
+						}	
+					}
+				}
+			}
+		}
+
+		void flood_fill(cv::InputArray src, cv::OutputArray dst, const UTIL::CONNECTIVITIES & direction)
+		{
+			cv::Mat b = src.getMat(); 
+			dst.create(b.size(), CV_32SC1);
+			cv::Mat l = dst.getMat();
+
+			int label = 1;
+
+			for (int y = 0; y < l.rows; y++) {
+				for (int x = 0; x < l.cols; x++) {
+					if ((int)b.at<uchar>(y, x) == 0) {
+						l.at<int>(y, x) = 0;
+					}
+					if ((int)b.at<uchar>(y, x) != 0) {
+						l.at<int>(y, x) = -1;
+					}
+					if (y == 0 || y == l.rows - 1 || x == 0 || x == l.cols - 1) {
+						l.at<int>(y, x) = 0;
+					}
+				}
+			}
+
+			if (direction == UTIL::CONNECTIVITIES::NAIVE_FOURWAY) {
+				for (int j = 1; j < l.rows - 1; j++) {
+					for (int i = 1; i < l.cols - 1; i++) {
+						if (l.at<int>(j, i) == -1) {
+							flood_fill4(l, j, i, label);
+							label++;
+						}
+					}
+				}
+			}
+
+			if (direction == UTIL::CONNECTIVITIES::NAIVE_EIGHT_WAY) {
+				for (int j = 1; j < l.rows - 1; j++) {
+					for (int i = 1; i < l.cols - 1; i++) {
+						if (l.at<int>(j, i) == -1) {
+							flood_fill8(l, j, i, label);
+							label++;
+						}
+					}
+				}
+			}
+
+			if (direction == UTIL::CONNECTIVITIES::EFFICIENT_FOURWAY) {
+				for (int j = 1; j < l.rows - 1; j++) {
+					for (int i = 1; i < l.cols - 1; i++) {
+						if (l.at<int>(j, i) == -1) {
+							efficient_flood_fill4(l, j, i, label);
+							label++;
+						}
+					}
 				}
 			}
 		}
@@ -78,9 +277,8 @@ namespace IPCVL {
 				}
 			}
 		}
-	}  // namespace IMG_PROC
-<<<<<<< HEAD
-
+	}  // namespace IMG_PROC<<<<<<< HEAD
+/*
 	namespace UTIL {
 		int quantize(int a) {
 			int L = 256;
@@ -119,20 +317,5 @@ namespace IPCVL {
 				cv::line(histImage, cv::Point(bin_w*(i), hist_h), cv::Point(bin_w*(i), hist_h - histogram[i]), cv::Scalar(0, 0, 0), 1, 8, 0);
 		}
 	}  // namespace UTIL
-
-	namespace EXAMPLE {
-		void ChangeContrastAndBrightness(cv::InputArray src, cv::OutputArray dst, double alpha, int beta) {
-			dst.create(src.size(), src.type());
-			cv::Mat inputMat = src.getMat();
-			cv::Mat outputMat = dst.getMat();
-
-			for (int y = 0; y < inputMat.rows; y++)
-				for (int x = 0; x < inputMat.cols; x++)
-					outputMat.at<uchar>(y, x) = cv::saturate_cast<uchar>(alpha * inputMat.at<uchar>(y, x) + beta);
-		}
-	}  // namespace EXAMPLE
+	*/
 }
-=======
-}
-
->>>>>>> upstream/assignment_2

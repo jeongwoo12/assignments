@@ -12,7 +12,7 @@
 int main() {
 	cv::Mat srcMat = cv::imread("./samples/sample2_0.bmp", cv::IMREAD_GRAYSCALE);
 	cv::Mat opencvResult, ourResult;
-	const int THRESHOLD = 125;
+	const int THRESHOLD = 80;
 
 	cv::threshold(srcMat, opencvResult, THRESHOLD, 255, cv::THRESH_BINARY);
 	IPCVL::IMG_PROC::thresh_binary(srcMat, ourResult, THRESHOLD);
